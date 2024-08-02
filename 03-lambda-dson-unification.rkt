@@ -640,6 +640,15 @@
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once-def-sexpr omega_omega)) "omega-omega-reduced-once2.svg")
 (graph-to-svg-file (reduce-def-sexpr omega_omega) "omega-omega-reduced")
 
+(define omega3 '((lambda (x) (x x x)) (lambda (x) (x x x))))
+(graph-to-svg-file (parse-sexpr omega3) "omega3-syntax.svg")
+(graph-to-svg-file (comp-def-sexpr omega3) "omega3-comp.svg")
+(graph-to-svg-file (reduce-once-def-sexpr omega3) "omega3-reduced-once.svg")
+(graph-to-svg-file (reduce-once (dag-context) (reduce-once-def-sexpr omega3)) "omega3-reduced-once2.svg")
+(graph-to-svg-file (reduce-once (dag-context) (reduce-once (dag-context) (reduce-once-def-sexpr omega3))) "omega3-reduced-once3.svg")
+(graph-to-svg-file (reduce-once (dag-context) (reduce-once (dag-context) (reduce-once (dag-context) (reduce-once-def-sexpr omega3)))) "omega3-reduced-once4.svg")
+;(graph-to-svg-file (reduce-def-sexpr omega3) "omega3-reduced") ; This one crashes. Duplicated recursive state.
+
 (define test-code '((lambda (x y) x) 42))
 ;;(define test-code '(+ 1 2))
 (graph-to-svg-file (parse-sexpr test-code) "syntax.svg")
