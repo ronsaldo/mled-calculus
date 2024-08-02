@@ -4,9 +4,9 @@
 (require racket/format)
 (require racket/set)
 
-(provide save-to-dot-file)
+(provide graph-to-dot-file)
 (provide graph-to-svg)
-(provide save-to-svg-file)
+(provide graph-to-svg-file)
 
 ;; dependencies-of-object :: Any -> List[Any]
 (define (dependencies-of-object object)
@@ -71,8 +71,8 @@
         "}\n"
     ))))
 
-;; save-to-dot-file :: Any, String -> Void. [Fx]
-(define (save-to-dot-file graph filename)
+;; graph-to-dot-file :: Any, String -> Void. [Fx]
+(define (graph-to-dot-file graph filename)
     (define dot (graph-to-dot graph))
     (define out (open-output-file filename #:exists 'truncate))
     (display dot out)
@@ -92,8 +92,8 @@
     (subprocess-wait sp)
     result)
 
-;; save-to-svg-file :: Any, String -> Void. [Fx]
-(define (save-to-svg-file graph filename)
+;; graph-to-svg-file :: Any, String -> Void. [Fx]
+(define (graph-to-svg-file graph filename)
     (define svg (graph-to-svg graph))
     (define out (open-output-file filename #:exists 'truncate))
     (display svg out)

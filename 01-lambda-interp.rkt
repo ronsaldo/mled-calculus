@@ -368,5 +368,5 @@
 ;;(println "Running omega. This should never end or stack overflow.")
 ;;(interp-def-sexpr '((lambda (x) (x x)) (lambda (x) (x x))))
 
-;(save-to-svg-file (parse-sexpr '((lambda (x) x) 42)) "syntax.svg")
-;(save-to-svg-file (interp-def-sexpr '(lambda (x) x)) "test.svg")
+;(graph-to-svg-file (parse-sexpr '((lambda (x) x) 42)) "syntax.svg")
+;(graph-to-svg-file (interp-def-sexpr '(lambda (x) x)) "test.svg")
