@@ -646,3 +646,11 @@
 (graph-to-svg-file (comp-def-sexpr test-code) "comp.svg")
 (graph-to-svg-file (reduce-once-def-sexpr test-code) "reduced-once.svg")
 ;;(graph-to-svg-file (reduce-def-sexpr test-code) "reduced.svg")
+
+(define id_arg (val-argument))
+(define id_fun (val-lambda id_arg id_arg))
+(define cyclic_id (val-apply id_fun id_fun))
+
+(graph-to-svg-file cyclic_id "cyclic-id.svg")
+(graph-to-svg-file (reduce-once (dag-context) cyclic_id) "cyclic-id-reduced-once.svg")
+(graph-to-svg-file (reduce (dag-context) cyclic_id) "cyclic-id-reduced.svg")
