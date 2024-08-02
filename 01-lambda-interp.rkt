@@ -2,6 +2,7 @@
 
 (require racket/match)
 (require rackunit)
+(require "util-graphviz.rkt")
 
 ;; AST Syntactic nodes.
 (struct stx-integer (value) #:transparent)
@@ -24,7 +25,6 @@
 ;; Syntax Grammar:
 ;; expr ::= <integer>
 ;;        | <boolean>
-;;        | <true>
 ;;        | <identifier>
 ;;        | ()
 ;;        | (if <expr> <expr> <expr>)
@@ -101,7 +101,8 @@
 
 ;; Interpreter Value :: VInteger | VTrue | VFalse
 ;;                     | VClosure(Environment, Symbol, Syntax) 
-;;                     | VPrimitive(Value -> Value) | VUnit
+;;                     | VPrimitive(Value -> Value)
+;;                     | VUnit | VPair(Value, Value)
 ;;                     | VInjectLeft(Value) | VInjectRight(Value)
 (struct val-integer (value) #:transparent)
 (struct val-true () #:transparent)
@@ -366,3 +367,6 @@
 ;; Omega
 ;;(println "Running omega. This should never end or stack overflow.")
 ;;(interp-def-sexpr '((lambda (x) (x x)) (lambda (x) (x x))))
+
+;(save-to-svg-file (parse-sexpr '((lambda (x) x) 42)) "syntax.svg")
+;(save-to-svg-file (interp-def-sexpr '(lambda (x) x)) "test.svg")
