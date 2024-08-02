@@ -99,7 +99,10 @@
 (struct environment-empty () #:transparent)
 (struct environment-child (parent symbol value) #:transparent)
 
-;; Interpreter Values :: VInteger | VTrue | VFalse | VClosure(Environment, Symbol, Syntax)
+;; Interpreter Value :: VInteger | VTrue | VFalse
+;;                     | VClosure(Environment, Symbol, Syntax) 
+;;                     | VPrimitive(Value -> Value) | VUnit
+;;                     | VInjectLeft(Value) | VInjectRight(Value)
 (struct val-integer (value) #:transparent)
 (struct val-true () #:transparent)
 (struct val-false () #:transparent)
@@ -359,3 +362,7 @@
     (interp-def-sexpr '(case (inject-right 1) (lambda (x) x) (lambda (x) (+ x 1))))
     (val-integer 2)]
 )
+
+;; Omega
+;;(println "Running omega. This should never end or stack overflow.")
+;;(interp-def-sexpr '((lambda (x) (x x)) (lambda (x) (x x))))
