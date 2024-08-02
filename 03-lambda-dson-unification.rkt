@@ -266,6 +266,15 @@
       function-table
     )))
 
+;; dag-get-memoization-equal-table :: DagContext -> Dict(Any, Any)
+(define (dag-get-memoization-equal-table context function-name)
+  (if (hash-has-key? context function-name)
+    (hash-ref context function-name)
+    (let [(function-table (make-hash))]
+      (hash-set! context function-name function-table)
+      function-table
+    )))
+
 ;; dag-memoize :: DagContext, (Unit -> Any)
 ;; Mutable store used for graph transform algorithm. Keys are compared by identity.
 (define (dag-memoize context function-name value transform)
@@ -279,6 +288,38 @@
       (let [(transform-result (transform))]
         (hash-set! memoization-table value transform-result)
         transform-result))))
+
+(struct dag-unif-val (value))
+
+;; can-unify :: DagContext, Value -> Value
+(define (can-unify value)
+  (match value
+    [(val-argument) #f]
+    [_ #t]))
+
+;; unify :: DagContext, Value -> Value
+(define (unify context value)
+  (define (do-unify)
+    (define unification-value (dag-unif-val value))
+    (define unification-table (dag-get-memoization-equal-table context 'unification))
+    (if (hash-has-key? unification-table unification-value)
+      (dag-unif-val-value (hash-ref unification-table unification-value))
+      (begin
+        ;(hash-set! unification-table unification-value value)
+        (let ([with-unified-children (val-recurse-children value (lambda (child) (unify context child)))])
+          (hash-set! unification-table unification-value with-unified-children)
+          with-unified-children)
+      )))
+  (displayln "can-unify")
+  (displayln value)
+  (displayln (can-unify value))
+  (if (can-unify value)
+    (do-unify)
+    value))
+
+(define test-context (dag-context))
+(displayln (eq? (val-argument) (val-argument)))
+(displayln (eq? (unify test-context (val-argument)) (unify test-context (val-argument))))
 
 ;; comp :: Environment, Syntax -> Value
 (define (comp environment syntax)
@@ -467,8 +508,8 @@
 ;; reduce-once :: DagContext, Value -> Value
 (define (reduce-once context value)
   (dag-memoize context 'reduce-once value (lambda ()
-      (define with-reduced-child (val-recurse-children value (lambda (child) (reduce-once context child))))
-      (reduction-rule context with-reduced-child))))
+      (define with-reduced-child (unify context (val-recurse-children value (lambda (child) (reduce-once context child)))))
+      (unify context (reduction-rule context with-reduced-child)))))
 
 ;; substitute :: Original, Substitution, Expression -> Value
 (define (substitute context original substitution expression)
@@ -489,8 +530,8 @@
 ;; Reduce until achieving a fixpoint.
 (define (reduce context value)
   (dag-memoize context 'reduce value (lambda ()
-      (define with-reduced-child (val-recurse-children value (lambda (child) (reduce context child))))
-      (define reduced-once (reduction-rule context with-reduced-child))
+      (define with-reduced-child (unify context (val-recurse-children value (lambda (child) (reduce-once context child)))))
+      (define reduced-once (unify context (reduction-rule context with-reduced-child)))
       (if (eq? with-reduced-child reduced-once)
         reduced-once
         (reduce context reduced-once)))))
