@@ -289,7 +289,7 @@
         (hash-set! memoization-table value transform-result)
         transform-result))))
 
-(struct dag-unif-val (value))
+(struct dag-unif-val (value) #:transparent)
 
 ;; can-unify :: DagContext, Value -> Value
 (define (can-unify value)
@@ -303,23 +303,17 @@
     (define unification-value (dag-unif-val value))
     (define unification-table (dag-get-memoization-equal-table context 'unification))
     (if (hash-has-key? unification-table unification-value)
-      (dag-unif-val-value (hash-ref unification-table unification-value))
+      (hash-ref unification-table unification-value)
       (begin
-        ;(hash-set! unification-table unification-value value)
+        (hash-set! unification-table unification-value value)
         (let ([with-unified-children (val-recurse-children value (lambda (child) (unify context child)))])
           (hash-set! unification-table unification-value with-unified-children)
-          with-unified-children)
+          value)
       )))
-  (displayln "can-unify")
-  (displayln value)
-  (displayln (can-unify value))
+
   (if (can-unify value)
     (do-unify)
     value))
-
-(define test-context (dag-context))
-(displayln (eq? (val-argument) (val-argument)))
-(displayln (eq? (unify test-context (val-argument)) (unify test-context (val-argument))))
 
 ;; comp :: Environment, Syntax -> Value
 (define (comp environment syntax)
@@ -530,7 +524,7 @@
 ;; Reduce until achieving a fixpoint.
 (define (reduce context value)
   (dag-memoize context 'reduce value (lambda ()
-      (define with-reduced-child (unify context (val-recurse-children value (lambda (child) (reduce-once context child)))))
+      (define with-reduced-child (unify context (val-recurse-children value (lambda (child) (reduce context child)))))
       (define reduced-once (unify context (reduction-rule context with-reduced-child)))
       (if (eq? with-reduced-child reduced-once)
         reduced-once
@@ -637,7 +631,14 @@
 (graph-to-svg-file (comp-def-sexpr omega) "omega-comp.svg")
 (graph-to-svg-file (reduce-once-def-sexpr omega) "omega-reduced-once.svg")
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once-def-sexpr omega)) "omega-reduced-once2.svg")
-;(graph-to-svg-file (reduce-def-sexpr omega) "omega-reduced")
+(graph-to-svg-file (reduce-def-sexpr omega) "omega-reduced")
+
+(define omega_omega '(((lambda (x) (x x)) (lambda (x) (x x))) ((lambda (x) (x x)) (lambda (x) (x x)))) )
+(graph-to-svg-file (parse-sexpr omega_omega) "omega-omega-syntax.svg")
+(graph-to-svg-file (comp-def-sexpr omega_omega) "omega-omega-comp.svg")
+(graph-to-svg-file (reduce-once-def-sexpr omega_omega) "omega-omega-reduced-once.svg")
+(graph-to-svg-file (reduce-once (dag-context) (reduce-once-def-sexpr omega_omega)) "omega-omega-reduced-once2.svg")
+(graph-to-svg-file (reduce-def-sexpr omega_omega) "omega-omega-reduced")
 
 (define test-code '((lambda (x y) x) 42))
 ;;(define test-code '(+ 1 2))
