@@ -105,6 +105,8 @@
 ;;                 | VIf(Value, Value, Value) 
 ;;                 | VInteger | VTrue | VFalse
 ;;                 | VLambda(VArgument, Value)
+;;                 | VMu(VMuArgument, Value)
+;;                 | VMuArgument
 ;;                 | VPrimitive(Value -> Value)
 ;;                 | VUnit
 ;;                 | VPair(Value, Value)
@@ -120,6 +122,8 @@
 (struct val-true () #:transparent)
 (struct val-false () #:transparent)
 (struct val-lambda (argument body) #:transparent)
+(struct val-mu (argument body) #:transparent)
+(struct val-muargument () #:transparent)
 (struct val-pair (first second) #:transparent)
 (struct val-first (pair) #:transparent)
 (struct val-second (pair) #:transparent)
@@ -256,6 +260,7 @@
 ;; Mutable store used for graph transform algorithm. Keys are compared by identity.
 (define dag-context make-hash)
 (struct dag-pending-token ())
+(struct dag-pending-cylic-token (muarg is-cyclic))
 
 ;; dag-get-memoization-table :: DagContext -> Dict(Any, Any)
 (define (dag-get-memoization-table context function-name)
@@ -276,7 +281,7 @@
     )))
 
 ;; dag-memoize :: DagContext, (Unit -> Any)
-;; Mutable store used for graph transform algorithm. Keys are compared by identity.
+;; Common scaffolding required for non-cyclic dag algorithms.
 (define (dag-memoize context function-name value transform)
   (define memoization-table (dag-get-memoization-table context function-name))
   (if (hash-has-key? memoization-table value)
@@ -289,12 +294,37 @@
         (hash-set! memoization-table value transform-result)
         transform-result))))
 
+;; dag-cyclic-memoize :: DagContext, (Unit -> Any)
+;; Common scaffolding required for cyclic-reducing dag rewriting algorithms.
+;; This seems to be related to transfinite induction/recursion, and self-referencing systems.
+;; Needed for the reduction of ((lambda (x) (x x x)) (lambda (x) (x x x))).
+(define (dag-cyclic-memoize context function-name value muarg-function mu-function transform)
+  (define memoization-table (dag-get-memoization-table context function-name))
+  (if (hash-has-key? memoization-table value)
+    (match (hash-ref memoization-table value)
+      [(dag-pending-cylic-token muarg is-cyclic-box) (begin
+        (set-box! is-cyclic-box #t)
+        muarg)]
+      [memoized-result memoized-result])
+    (begin (let [(muarg (muarg-function)) (is-cyclic-box (box #f))]
+      (hash-set! memoization-table value (dag-pending-cylic-token muarg is-cyclic-box))
+      (let [(transform-result (transform))]
+        (let [(result (if (unbox is-cyclic-box)
+            (mu-function muarg transform-result)
+            transform-result
+          ))]
+          (begin
+            (hash-set! memoization-table value result)
+            result
+          )))))))
+
 (struct dag-unif-val (value) #:transparent)
 
 ;; can-unify :: DagContext, Value -> Value
 (define (can-unify value)
   (match value
     [(val-argument) #f]
+    [(val-muargument) #f]
     [_ #t]))
 
 ;; unify :: DagContext, Value -> Value
@@ -458,6 +488,7 @@
 (define (is-final-constant-val value)
   (match value
     [(val-lambda _ _) value]
+    [(val-mu _ _) value]
     [_ value]))
 
 (test-case
@@ -471,11 +502,13 @@
   (match value
     [(val-apply functional argument) (val-apply (rec functional) (rec argument))]
     [(val-argument) value]
+    [(val-muargument) value]
     [(val-if condition true-block false-block) (val-if (rec condition) (rec true-block) (rec false-block))]
     [(val-integer _) value]
     [(val-true) value]
     [(val-false) value]
     [(val-lambda argument body) (val-lambda (rec argument) (rec body))]
+    [(val-mu argument body) (val-mu (rec argument) (rec body))]
     [(val-pair first second) (val-pair (rec first) (rec second))]
     [(val-first pair) (val-first (rec pair))]
     [(val-second pair) (val-second (rec pair))]
@@ -501,7 +534,7 @@
 
 ;; reduce-once :: DagContext, Value -> Value
 (define (reduce-once context value)
-  (dag-memoize context 'reduce-once value (lambda ()
+  (dag-cyclic-memoize context 'reduce-once value val-muargument val-mu (lambda ()
       (define with-reduced-child (unify context (val-recurse-children value (lambda (child) (reduce-once context child)))))
       (unify context (reduction-rule context with-reduced-child)))))
 
@@ -523,7 +556,7 @@
 ;; reduce :: DagContext, Value -> Value
 ;; Reduce until achieving a fixpoint.
 (define (reduce context value)
-  (dag-memoize context 'reduce value (lambda ()
+  (dag-cyclic-memoize context 'reduce value val-muargument val-mu (lambda ()
       (define with-reduced-child (unify context (val-recurse-children value (lambda (child) (reduce context child)))))
       (define reduced-once (unify context (reduction-rule context with-reduced-child)))
       (if (eq? with-reduced-child reduced-once)
@@ -647,7 +680,7 @@
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once-def-sexpr omega3)) "omega3-reduced-once2.svg")
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once (dag-context) (reduce-once-def-sexpr omega3))) "omega3-reduced-once3.svg")
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once (dag-context) (reduce-once (dag-context) (reduce-once-def-sexpr omega3)))) "omega3-reduced-once4.svg")
-;(graph-to-svg-file (reduce-def-sexpr omega3) "omega3-reduced") ; This one crashes. Duplicated recursive state.
+(graph-to-svg-file (reduce-def-sexpr omega3) "omega3-reduced") ; This one crashes. Duplicated recursive state.
 
 (define test-code '((lambda (x y) x) 42))
 ;;(define test-code '(+ 1 2))
