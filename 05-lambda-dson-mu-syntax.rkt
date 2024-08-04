@@ -54,6 +54,8 @@
       ([list] (stx-unit))
       ([list 'if condition true-expression false-expression]
         (stx-if (parse-sexpr condition) (parse-sexpr true-expression) (parse-sexpr false-expression)))
+      ([list 'not expression]
+        (stx-if (parse-sexpr expression) (stx-false) (stx-true)))
       ([list 'lambda arguments body] (foldr stx-lambda (parse-sexpr body) arguments))
       ([list 'mu arguments body] (foldr stx-mu (parse-sexpr body) arguments))
       ([list 'let nameValues body]
@@ -86,6 +88,7 @@
   (check-equal? (parse-sexpr '(x 42 45)) (stx-application (stx-application (stx-identifier 'x) (stx-integer 42)) (stx-integer 45)))
   (check-equal? (parse-sexpr '()) (stx-unit))
   (check-equal? (parse-sexpr '(if #t 1 2)) (stx-if (stx-true) (stx-integer 1) (stx-integer 2)))
+  (check-equal? (parse-sexpr '(not #t)) (stx-if (stx-true) (stx-false) (stx-true)))
   (check-equal? (parse-sexpr '(lambda (x) x)) (stx-lambda 'x (stx-identifier 'x)))
   (check-equal? (parse-sexpr '(lambda (x y) x)) (stx-lambda 'x (stx-lambda 'y (stx-identifier 'x))))
   (check-equal? (parse-sexpr '(mu (x) x)) (stx-mu 'x (stx-identifier 'x)))
@@ -150,12 +153,6 @@
     (val-true)
     (val-false)))
 
-;; val-primitive-boolean-unary-operation :: (Boolean -> Boolean) -> val-primitive
-(define (val-primitive-boolean-unary-operation operation)
-  (val-primitive (lambda (argument)
-    (define argument-value (val-unwrap-boolean argument))
-    (val-wrap-boolean (operation argument-value)))))
-
 ;; val-primitive-integer-unary-operation :: (Integer -> Integer) -> val-primitive
 (define (val-primitive-integer-unary-operation operation)
   (val-primitive (lambda (argument)
@@ -180,13 +177,6 @@
 
 (test-case
   "Primitives"
-  [check-equal?
-    ((val-primitive-implementation (val-primitive-boolean-unary-operation not)) (val-true))
-    (val-false)]
-  [check-equal?
-    ((val-primitive-implementation (val-primitive-boolean-unary-operation not)) (val-false))
-    (val-true)]
-
   [check-equal?
     ((val-primitive-implementation (val-primitive-integer-unary-operation -)) (val-integer 2))
     (val-integer -2)]
@@ -245,8 +235,6 @@
 
 ;; Default environment
 (define default-environment (environment-with-values (environment-empty) [
-    (not (val-primitive-boolean-unary-operation not))
-
     (negate (val-primitive-integer-unary-operation -))
 
     (+ (val-primitive-integer-binary-operation +))
@@ -539,8 +527,13 @@
       (primitive argument)] ;; Evaluate primitive with constants.
     [(val-apply (val-lambda argument-definition body) argument-value)
       (substitute (dag-context) argument-definition argument-value body)]
+    [(val-mu argument body)
+      (if (uses-var? context body argument)
+        value
+        body)]
     [(val-if (val-true) true-block _) true-block]
     [(val-if (val-false) _ false-block) false-block]
+    [(val-if expr result result) result]
     [(val-first (val-pair first _)) first]
     [(val-second (val-pair _ second)) second]
     [(val-case (val-inject-left value) left-case _) (val-apply left-case value)]
@@ -553,12 +546,54 @@
       (define with-reduced-child (unify context (val-recurse-children value (lambda (child) (reduce-once context child)))))
       (unify context (reduction-rule context with-reduced-child)))))
 
+;; find-used-var-set :: DagContext Expression -> Set(Value)
+(define (find-used-var-set context expression)
+  (dag-memoize context 'find-used-var-set expression (lambda ()
+    (match expression
+      [(val-apply functional argument) (set-union (find-used-var-set context functional) (find-used-var-set context argument))]
+      [(val-argument) (seteq expression)]
+      [(val-muargument) (seteq expression)]
+      [(val-if condition true-block false-block) (set-union (find-used-var-set context condition) (find-used-var-set context true-block) (find-used-var-set context false-block))]
+      [(val-integer _) (seteq)]
+      [(val-true) (seteq)]
+      [(val-false) (seteq)]
+      [(val-lambda argument body) (set-union (find-used-var-set context argument) (find-used-var-set context body))]
+      [(val-mu argument body) (set-union (find-used-var-set context argument) (find-used-var-set context body))]
+      [(val-pair first second) (set-union (find-used-var-set context first) (find-used-var-set context second))]
+      [(val-first pair) (find-used-var-set pair)]
+      [(val-second pair) (find-used-var-set pair)]
+      [(val-primitive _) (seteq)]
+      [(val-inject-left value) (find-used-var-set value)]
+      [(val-inject-right value) (find-used-var-set value)]
+      [(val-case value left-case right-case) (set-union (find-used-var-set value) (find-used-var-set left-case) (find-used-var-set right-case))]))
+    ))
+
+;; uses-var? :: DagContext Expression Variable -> Set(Value)
+(define (uses-var? context expression var)
+  (set-member? (find-used-var-set context expression) var))
+
+(test-case
+  "Find used variable set"
+  (check-true (set-empty? (find-used-var-set (dag-context) (val-integer 42))))
+
+  (define arg_x (val-argument))
+  (define arg_y (val-argument))
+  (check-true (set-member? (find-used-var-set (dag-context) arg_x) arg_x))
+  (check-false (set-member? (find-used-var-set (dag-context) arg_x) arg_y))
+
+  (check-true (set-member? (find-used-var-set (dag-context) (val-apply arg_x arg_x)) arg_x))
+  (check-true (set-member? (find-used-var-set (dag-context) (val-apply arg_x arg_y)) arg_x))
+  (check-true (set-member? (find-used-var-set (dag-context) (val-apply arg_x arg_y)) arg_y))
+)
+
 ;; substitute :: Original, Substitution, Expression -> Value
 (define (substitute context original substitution expression)
   (if (eq? original expression)
     substitution
-    (dag-memoize context 'substitute expression (lambda ()
-      (val-recurse-children expression (lambda (child) (substitute context original substitution child)))))))
+    (if (set-member? (find-used-var-set context expression) original)
+      (dag-memoize context 'substitute expression (lambda ()
+        (val-recurse-children expression (lambda (child) (substitute context original substitution child)))))
+      expression)))
 
 ;; reduce-once-sexpr :: Environment, SExpr -> Value
 (define (reduce-once-sexpr environment sexpr)
@@ -598,6 +633,15 @@
     (reduce-once-def-sexpr #f)
     (val-false)]
   [check-equal?
+    (reduce-once-def-sexpr '(not #t))
+    (val-false)]
+  [check-equal?
+    (reduce-once-def-sexpr '(not #f))
+    (val-true)]
+  [check-equal?
+    (reduce-once-def-sexpr '(if 4 1 1))
+    (val-integer 1)]
+  [check-equal?
     (reduce-once-def-sexpr '(if #t 1 2))
     (val-integer 1)]
   [check-equal?
@@ -619,6 +663,14 @@
   [check-equal?
     (reduce-once-def-sexpr '((lambda (x y) y) 2 5))
     (val-integer 5)]
+
+  [check-equal?
+    (reduce-once-def-sexpr '(mu (x) x))
+    (comp-def-sexpr '(mu (x) x))]
+  [check-equal?
+    (reduce-once-def-sexpr '(mu (x) 5))
+    (val-integer 5)]
+
   [check-equal?
     (reduce-once-def-sexpr '(+ 2 3))
     (val-integer 5)]
@@ -677,26 +729,26 @@
 (define mu '(mu (x) x))
 (graph-to-svg-file (parse-sexpr mu) "mu-syntax.svg")
 (graph-to-svg-file (comp-def-sexpr mu) "mu-comp.svg")
-(graph-to-svg-file (reduce-def-sexpr mu) "mu-reduced")
+(graph-to-svg-file (reduce-def-sexpr mu) "mu-reduced.svg")
 
 (define mu-id '(mu (x) ((lambda (y) y) x)))
 (graph-to-svg-file (parse-sexpr mu-id) "mu-id-syntax.svg")
 (graph-to-svg-file (comp-def-sexpr mu-id) "mu-id-comp.svg")
-(graph-to-svg-file (reduce-def-sexpr mu-id) "mu-id-reduced")
+(graph-to-svg-file (reduce-def-sexpr mu-id) "mu-id-reduced.svg")
 
 (define omega '((lambda (x) (x x)) (lambda (x) (x x))))
 (graph-to-svg-file (parse-sexpr omega) "omega-syntax.svg")
 (graph-to-svg-file (comp-def-sexpr omega) "omega-comp.svg")
 (graph-to-svg-file (reduce-once-def-sexpr omega) "omega-reduced-once.svg")
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once-def-sexpr omega)) "omega-reduced-once2.svg")
-(graph-to-svg-file (reduce-def-sexpr omega) "omega-reduced")
+(graph-to-svg-file (reduce-def-sexpr omega) "omega-reduced.svg")
 
 (define omega_omega '(((lambda (x) (x x)) (lambda (x) (x x))) ((lambda (x) (x x)) (lambda (x) (x x)))) )
 (graph-to-svg-file (parse-sexpr omega_omega) "omega-omega-syntax.svg")
 (graph-to-svg-file (comp-def-sexpr omega_omega) "omega-omega-comp.svg")
 (graph-to-svg-file (reduce-once-def-sexpr omega_omega) "omega-omega-reduced-once.svg")
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once-def-sexpr omega_omega)) "omega-omega-reduced-once2.svg")
-(graph-to-svg-file (reduce-def-sexpr omega_omega) "omega-omega-reduced")
+(graph-to-svg-file (reduce-def-sexpr omega_omega) "omega-omega-reduced.svg")
 
 (define omega3 '((lambda (x) (x x x)) (lambda (x) (x x x))))
 (graph-to-svg-file (parse-sexpr omega3) "omega3-syntax.svg")
@@ -705,7 +757,7 @@
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once-def-sexpr omega3)) "omega3-reduced-once2.svg")
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once (dag-context) (reduce-once-def-sexpr omega3))) "omega3-reduced-once3.svg")
 (graph-to-svg-file (reduce-once (dag-context) (reduce-once (dag-context) (reduce-once (dag-context) (reduce-once-def-sexpr omega3)))) "omega3-reduced-once4.svg")
-(graph-to-svg-file (reduce-def-sexpr omega3) "omega3-reduced") ; This one crashes. Duplicated recursive state.
+(graph-to-svg-file (reduce-def-sexpr omega3) "omega3-reduced.svg") ; This one crashes. Duplicated recursive state.
 
 (define test-code '((lambda (x y) x) 42))
 ;;(define test-code '(+ 1 2))
@@ -721,3 +773,27 @@
 (graph-to-svg-file cyclic_id "cyclic-id.svg")
 (graph-to-svg-file (reduce-once (dag-context) cyclic_id) "cyclic-id-reduced-once.svg")
 (graph-to-svg-file (reduce (dag-context) cyclic_id) "cyclic-id-reduced.svg")
+
+;; This statement is lying
+(define this-statement '(mu (x) (not x)))
+(graph-to-svg-file (parse-sexpr this-statement) "this-statement-syntax.svg")
+(graph-to-svg-file (comp-def-sexpr this-statement) "this-statement-comp.svg")
+(graph-to-svg-file (reduce-def-sexpr this-statement) "this-statement-reduced.svg")
+
+;; Membrane.
+(define membrane '(lambda (open) (mu (x) (if open 42 x)) ))
+(graph-to-svg-file (parse-sexpr membrane) "membrane-syntax.svg")
+(graph-to-svg-file (comp-def-sexpr membrane) "membrane-comp.svg")
+(graph-to-svg-file (reduce-def-sexpr membrane) "membrane-reduced.svg")
+
+;; Membrane open.
+(define membrane-open '((lambda (open) (mu (x) (if open 42 x))) #t))
+(graph-to-svg-file (parse-sexpr membrane-open) "membrane-open-syntax.svg")
+(graph-to-svg-file (comp-def-sexpr membrane-open) "membrane-open-comp.svg")
+(graph-to-svg-file (reduce-def-sexpr membrane-open) "membrane-open-reduced.svg")
+
+;; Membrane closed.
+(define membrane-closed '((lambda (open) (mu (x) (if open 42 x))) #f))
+(graph-to-svg-file (parse-sexpr membrane-closed) "membrane-closed-syntax.svg")
+(graph-to-svg-file (comp-def-sexpr membrane-closed) "membrane-closed-comp.svg")
+(graph-to-svg-file (reduce-def-sexpr membrane-closed) "membrane-closed-reduced.svg")
