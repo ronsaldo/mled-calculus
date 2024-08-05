@@ -14,6 +14,21 @@
         [(struct? object) (filter struct? (rest (vector->list (struct->vector object))))]
         [else (list)]))
 
+;; named-dependencies-of-struct :: Any -> List[Any]
+(define (named-dependencies-of-struct object)
+    (define index (box 0))
+    (define with-indices (map (lambda (element)
+        (define element-index (unbox index))
+        (set-box! index (+ element-index 1))
+        (cons element-index element)) (rest (vector->list (struct->vector object)))))
+    (filter (compose struct? cdr) with-indices))
+
+;; named-dependencies-of-object :: Any -> List[Any]
+(define (named-dependencies-of-object object)
+    (cond
+        [(struct? object) (named-dependencies-of-struct object)]
+        [else (list)]))
+
 ;; graph-dfs :: List[Any] -> (Any-> List[Any]) -> List[Any]
 (define (graph-dfs roots)
     (define visited-set (mutable-seteq))
@@ -62,10 +77,11 @@
             nodes)
         (map (lambda (node)
             (define node-name (node->name node))
-            (map (lambda (dep)
+            (map (lambda (depAndEdgeName)
+                (match-define [cons edge-name dep] depAndEdgeName)
                 (define dep-name (node->name dep))
-                (string-append "  " node-name " -> " dep-name "\n"))
-                (dependencies-of-object node)))
+                (string-append "  " node-name " -> " dep-name "[label =\"" (~v edge-name) "\"]\n"))
+                (named-dependencies-of-object node)))
             nodes)
 
         "}\n"

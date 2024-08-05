@@ -797,3 +797,17 @@
 (graph-to-svg-file (parse-sexpr membrane-closed) "membrane-closed-syntax.svg")
 (graph-to-svg-file (comp-def-sexpr membrane-closed) "membrane-closed-comp.svg")
 (graph-to-svg-file (reduce-def-sexpr membrane-closed) "membrane-closed-reduced.svg")
+
+;; Halting problem paradox function
+(define halting-problem-function '(lambda (x) (if x #f (mu (y) y)) ))
+(graph-to-svg-file (parse-sexpr halting-problem-function) "halting-problem-function-syntax.svg")
+(graph-to-svg-file (comp-def-sexpr halting-problem-function) "halting-problem-function-comp.svg")
+(graph-to-svg-file (reduce-def-sexpr halting-problem-function) "halting-problem-function-reduced.svg")
+
+;; Halting problem
+(define halting-problem '(let
+  [(F (lambda (x) (if x #f (mu (y) y)) ))]
+   (F F)))
+(graph-to-svg-file (parse-sexpr halting-problem) "halting-problem-syntax.svg")
+(graph-to-svg-file (comp-def-sexpr halting-problem) "halting-problem-comp.svg")
+(graph-to-svg-file (reduce-def-sexpr halting-problem) "halting-problem-reduced.svg")
