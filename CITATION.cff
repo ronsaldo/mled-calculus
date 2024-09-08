@@ -1,0 +1,23 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: Mu Lambda Epsilon Delta Calculus Proof of Concept
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Ronie Alexis
+    family-names: Salgado Faila
+    email: ronie@desromech.cl
+    affiliation: 'Desromech EIRL - Pleiad, DCC, University of Chile'
+    orcid: 'https://orcid.org/0000-0002-9543-3735'
+repository-code: 'https://github.com/ronsaldo/mled-calculus'
+abstract: >-
+  Proof of Concept Implementation of the
+  Mu-Lambda-Epsilon-Delta calculus.
+keywords:
+  - Programming Language
+  - Theory of computation
+license: MIT
