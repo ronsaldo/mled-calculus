@@ -96,6 +96,8 @@
   (check-equal? (parse-sexpr '(lambda (x y) x)) (stx-lambda 'x (stx-lambda 'y (stx-identifier 'x))))
   (check-equal? (parse-sexpr '(mu (x) x)) (stx-mu 'x (stx-identifier 'x)))
   (check-equal? (parse-sexpr '(mu (x y) x)) (stx-mu 'x (stx-mu 'y (stx-identifier 'x))))
+  (check-equal? (parse-sexpr '(eps (x) x)) (stx-eps 'x (stx-identifier 'x)))
+  (check-equal? (parse-sexpr '(eps (x y) x)) (stx-eps 'x (stx-eps 'y (stx-identifier 'x))))
   (check-equal? (parse-sexpr '(let [(x 42)] x)) (stx-let 'x (stx-integer 42) (stx-identifier 'x)))
   (check-equal? (parse-sexpr '(let [(x 42) (y 45)] y)) (stx-let 'x (stx-integer 42) (stx-let 'y (stx-integer 45) (stx-identifier 'y))))
   (check-equal? (parse-sexpr '(pair 1 2)) (stx-pair (stx-integer 1) (stx-integer 2)))
@@ -108,12 +110,15 @@
 
 ;; Compiler Value ::
 ;;                 | VApply(Value, Value)
+;;                 | VExpand(Value, Value)
 ;;                 | VArgument
 ;;                 | VIf(Value, Value, Value) 
 ;;                 | VInteger | VTrue | VFalse | VSymbol
 ;;                 | VLambda(VArgument, Value)
 ;;                 | VMu(VMuArgument, Value)
 ;;                 | VMuArgument
+;;                 | VEps(VEpsArgument, Value)
+;;                 | VEpsArgument
 ;;                 | VPrimitive(Value -> Value)
 ;;                 | VUnit
 ;;                 | VPair(Value, Value)
@@ -126,6 +131,7 @@
 ;;                 | VChildEnvironment
 (struct val-apply (functional argument) #:transparent)
 (struct val-argument () #:transparent)
+(struct val-expand (macro argument) #:transparent)
 (struct val-if (condition true-block false-block) #:transparent)
 (struct val-integer (value) #:transparent)
 (struct val-true () #:transparent)
@@ -134,6 +140,8 @@
 (struct val-lambda (argument body) #:transparent)
 (struct val-mu (argument body) #:transparent)
 (struct val-muargument () #:transparent)
+(struct val-eps (argument body) #:transparent)
+(struct val-epsargument () #:transparent)
 (struct val-pair (first second) #:transparent)
 (struct val-first (pair) #:transparent)
 (struct val-second (pair) #:transparent)
@@ -144,6 +152,7 @@
 (struct val-case (value left-case right-case) #:transparent)
 (struct val-environment-empty () #:transparent)
 (struct val-environment-child (parent symbol value) #:transparent)
+(struct val-lookup-environment (environment symbol) #:transparent)
 
 ;; val-unwrap-boolean :: VTrue | VFalse -> Boolean
 (define (val-unwrap-boolean value)
@@ -322,6 +331,7 @@
   (match value
     [(val-argument) #f]
     [(val-muargument) #f]
+    [(val-epsargument) #f]
     [_ #t]))
 
 ;; unify :: DagContext, Value -> Value
@@ -342,28 +352,43 @@
     (do-unify)
     value))
 
-;; comp :: Environment, Syntax -> Value
-(define (comp environment syntax)
+;; comp :: Syntax -> (Environment -> Semantic)
+(define (comp syntax)
   (match syntax
     [(stx-integer value) (val-integer value)]
     [(stx-true) (val-true)]
     [(stx-false) (val-false)]
     [(stx-unit) (val-unit)]
-    [(stx-identifier name) (lookup-valid-symbol environment (val-symbol name))]
+    [(stx-identifier name)
+      (define environment (val-epsargument))
+      (val-eps environment (val-lookup-environment environment (val-symbol name)))]
+
     [(stx-if condition true-expression false-expression)
-      (define condition-value (comp environment condition))
-      (define true-value (comp environment true-expression))
-      (define false-value (comp environment false-expression))
-      (val-if condition-value true-value false-value)]
+      (define environment (val-epsargument))
+      (define condition-value (val-expand (comp condition) environment))
+      (define true-value (val-expand (comp true-expression) environment))
+      (define false-value (val-expand (comp false-expression) environment))
+      (val-eps environment (val-if condition-value true-value false-value))]
+
+    [(stx-let name value body)
+      (define environment (val-epsargument))
+      (define child-env (val-environment-child environment (val-symbol name) (comp value)))
+      (define child-body (comp body))
+      (val-eps environment (val-expand child-body child-env))]
+
     [(stx-application functional argument)
-      (define functional-value (comp environment functional))
-      (define argument-value (comp environment argument))
-      (val-apply functional-value argument-value)]
+      (define environment (val-epsargument))
+      (define functional-value (val-expand (comp functional) environment))
+      (define argument-value (val-expand (comp argument) environment))
+      (val-eps environment (val-apply functional-value argument-value))]
+
     [(stx-lambda argument body)
+      (define environment (val-epsargument))
       (define argument-value (val-argument))
       (define closure-environment (val-environment-child environment (val-symbol argument) argument-value))
-      (define closure-body (comp closure-environment body))
-      (val-lambda argument-value closure-body)]
+      (define closure-body (val-expand (comp body) closure-environment))
+      (val-eps environment (val-lambda argument-value closure-body))]
+#|
     [(stx-mu argument body)
       (define argument-value (val-muargument))
       (define closure-environment (val-environment-child environment (val-symbol argument) argument-value))
@@ -389,11 +414,16 @@
       (define left-case-value (comp environment left-case))
       (define right-case-value (comp environment right-case))
       (val-case expression-value left-case-value right-case-value)]
+|#
   ))
 
 ;; comp-sexpr :: Environment, SExpr -> Value
+(define (comp-unexpanded-sexpr sexpr)
+  (comp (parse-sexpr sexpr)))
+
+;; comp-sexpr :: Environment, SExpr -> Value
 (define (comp-sexpr environment sexpr)
-  (comp environment (parse-sexpr sexpr)))
+  (val-expand (comp (parse-sexpr sexpr)) environment))
 
 ;; comp-def-sexpr :: SExpr -> Value
 (define (comp-def-sexpr sexpr)
@@ -402,26 +432,46 @@
 (test-case
   "Compiler test"
   [check-equal?
-    (comp-def-sexpr 1)
+    (comp-unexpanded-sexpr 1)
     (val-integer 1)]
   [check-equal?
-    (comp-def-sexpr #t)
+    (comp-unexpanded-sexpr #t)
     (val-true)]
   [check-equal?
-    (comp-def-sexpr #f)
+    (comp-unexpanded-sexpr #f)
     (val-false)]
   [check-equal?
-    (comp-def-sexpr '(if #t 1 2))
-    (val-if (val-true) (val-integer 1) (val-integer 2))]
+    (comp-unexpanded-sexpr '(if #t 1 2))
+    (val-eps
+    (val-epsargument)
+    (val-if
+      (val-expand (val-true) (val-epsargument))
+      (val-expand (val-integer 1) (val-epsargument))
+      (val-expand (val-integer 2) (val-epsargument))))]
   [check-equal?
-    (comp-def-sexpr '(if #f 1 2))
-    (val-if (val-false) (val-integer 1) (val-integer 2))]
+    (comp-unexpanded-sexpr '(if #f 1 2))
+    (val-eps
+      (val-epsargument)
+      (val-if
+        (val-expand (val-false) (val-epsargument))
+        (val-expand (val-integer 1) (val-epsargument))
+        (val-expand (val-integer 2) (val-epsargument))))]
   [check-equal?
-    (comp-def-sexpr '(let [(x 42)] x))
-    (val-integer 42)]
+    (comp-unexpanded-sexpr '(let [(x 42)] x))
+    (val-eps
+      (val-epsargument)
+      (val-expand
+        (val-eps
+        (val-epsargument)
+        (val-lookup-environment (val-epsargument) (val-symbol 'x)))
+        (val-environment-child (val-epsargument) (val-symbol 'x) (val-integer 42))))]
   [check-equal?
-    (comp-def-sexpr '(let [(x 42)] 5))
-    (val-integer 5)]
+    (comp-unexpanded-sexpr '(let [(x 42)] 5))
+    (val-eps
+      (val-epsargument)
+      (val-expand
+        (val-integer 5)
+        (val-environment-child (val-epsargument) (val-symbol 'x) (val-integer 42))))]
   (define arg_x (val-argument))
   (define arg_y (val-argument))
   [check-equal?
@@ -508,21 +558,29 @@
 (define (val-recurse-children value rec)
   (match value
     [(val-apply functional argument) (val-apply (rec functional) (rec argument))]
+    [(val-expand macro argument) (val-expand (rec macro) (rec argument))]
     [(val-argument) value]
     [(val-muargument) value]
+    [(val-epsargument) value]
+    [(val-environment-empty) value]
+    [(val-environment-child env-parent symbol value)
+      (val-environment-child (rec env-parent) (rec symbol) (rec value))]
     [(val-if condition true-block false-block) (val-if (rec condition) (rec true-block) (rec false-block))]
     [(val-integer _) value]
+    [(val-symbol _) value]
     [(val-true) value]
     [(val-false) value]
     [(val-lambda argument body) (val-lambda (rec argument) (rec body))]
     [(val-mu argument body) (val-mu (rec argument) (rec body))]
+    [(val-eps argument body) (val-eps (rec argument) (rec body))]
     [(val-pair first second) (val-pair (rec first) (rec second))]
     [(val-first pair) (val-first (rec pair))]
     [(val-second pair) (val-second (rec pair))]
     [(val-primitive _) value]
     [(val-inject-left value) (val-inject-left (rec value))]
     [(val-inject-right value) (val-inject-right (rec value))]
-    [(val-case value left-case right-case) (val-case (rec value) (rec left-case) (rec right-case))]))
+    [(val-case value left-case right-case) (val-case (rec value) (rec left-case) (rec right-case))]
+    [(val-lookup-environment environment symbol) (val-lookup-environment (rec environment) (rec symbol))]))
 
 ;; reduction-rule :: DagContext, Value -> Value
 (define (reduction-rule context value)
@@ -531,6 +589,9 @@
       (primitive argument)] ;; Evaluate primitive with constants.
     [(val-apply (val-lambda argument-definition body) argument-value)
       (substitute context argument-definition argument-value body)]
+    [(val-expand (val-eps argument-definition macro-body) environment-value)
+      (substitute context argument-definition environment-value macro-body)]
+    [(val-expand semantic-value environment) semantic-value]
     [(val-mu argument body)
       (if (uses-var? context body argument)
         value
@@ -556,12 +617,14 @@
     (match expression
       [(val-apply functional argument) (set-union (find-used-var-set context functional) (find-used-var-set context argument))]
       [(val-argument) (seteq expression)]
+      [(val-epsargument) (seteq expression)]
       [(val-muargument) (seteq expression)]
       [(val-if condition true-block false-block) (set-union (find-used-var-set context condition) (find-used-var-set context true-block) (find-used-var-set context false-block))]
       [(val-integer _) (seteq)]
       [(val-true) (seteq)]
       [(val-false) (seteq)]
       [(val-lambda argument body) (set-union (find-used-var-set context argument) (find-used-var-set context body))]
+      [(val-eps argument body) (set-union (find-used-var-set context argument) (find-used-var-set context body))]
       [(val-mu argument body) (set-union (find-used-var-set context argument) (find-used-var-set context body))]
       [(val-pair first second) (set-union (find-used-var-set context first) (find-used-var-set context second))]
       [(val-first pair) (find-used-var-set pair)]
@@ -569,8 +632,9 @@
       [(val-primitive _) (seteq)]
       [(val-inject-left value) (find-used-var-set value)]
       [(val-inject-right value) (find-used-var-set value)]
-      [(val-case value left-case right-case) (set-union (find-used-var-set value) (find-used-var-set left-case) (find-used-var-set right-case))]))
-    ))
+      [(val-case value left-case right-case) (set-union (find-used-var-set context value) (find-used-var-set context left-case) (find-used-var-set context right-case))]
+      [(val-lookup-environment lookenv symbol) (set-union (find-used-var-set context lookenv) (find-used-var-set context symbol))]
+    ))))
 
 ;; uses-var? :: DagContext Expression Variable -> Set(Value)
 (define (uses-var? context expression var)
@@ -601,7 +665,7 @@
 
 ;; reduce-once-sexpr :: Environment, SExpr -> Value
 (define (reduce-once-sexpr environment sexpr)
-  (reduce-once (dag-context) (comp environment (parse-sexpr sexpr))))
+  (reduce-once (dag-context) (val-expand (comp (parse-sexpr sexpr)) environment)))
 
 ;; reduce-once-def-sexpr :: SExpr -> Value
 (define (reduce-once-def-sexpr sexpr)
@@ -624,6 +688,8 @@
 ;; reduce-def-sexpr :: SExpr -> Value
 (define (reduce-def-sexpr sexpr)
   (reduce-sexpr default-environment sexpr))
+
+(displayln (reduce-once-def-sexpr '(let [(x 42)] x)))
 
 (test-case
   "Reduction once test case"
